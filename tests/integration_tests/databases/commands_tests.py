@@ -978,8 +978,10 @@ class TestTestConnectionDatabaseCommand(SupersetTestCase):
         connection exc is raised"""
         database = get_example_database()
         mock_g.user = security_manager.find_user("admin")
-        mock_get_sqla_engine.return_value.__enter__.side_effect = SupersetSecurityException(
-            SupersetError(error_type=500, message="test", level="info")
+        mock_get_sqla_engine.return_value.__enter__.side_effect = (
+            SupersetSecurityException(
+                SupersetError(error_type=500, message="test", level="info")
+            )
         )
         db_uri = database.sqlalchemy_uri_decrypted
         json_payload = {"sqlalchemy_uri": db_uri}
