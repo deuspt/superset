@@ -38,8 +38,11 @@ def _find_dataset(
     table_name: str,
     database_id: int,
     uuid: Optional[str] = None,
+    schema: Optional[str] = None,
 ) -> tuple[Optional[SqlaTable], bool]:
     """Find a dataset by UUID first, then fall back to table_name + database_id.
+
+    Includes schema in the fallback lookup to prevent cross-schema collisions.
 
     This avoids unique constraint violations when a duplicate row exists.
 
@@ -47,6 +50,7 @@ def _find_dataset(
         table_name: The table name to look up
         database_id: The database ID
         uuid: Optional UUID to look up first
+        schema: Optional schema to include in fallback lookup
 
     Returns:
         A tuple of (dataset or None, found_by_uuid bool)
@@ -62,7 +66,7 @@ def _find_dataset(
     if not tbl:
         tbl = (
             db.session.query(SqlaTable)
-            .filter_by(table_name=table_name, database_id=database_id)
+            .filter_by(table_name=table_name, database_id=database_id, schema=schema)
             .first()
         )
 
@@ -127,7 +131,7 @@ def load_parquet_table(  # noqa: C901
     table_exists = database.has_table(Table(table_name, schema=schema))
     if table_exists and not force:
         logger.info("Table %s already exists, skipping data load", table_name)
-        tbl, found_by_uuid = _find_dataset(table_name, database.id, uuid)
+        tbl, found_by_uuid = _find_dataset(table_name, database.id, uuid, schema)
         if tbl:
             # Backfill UUID if found by table_name (not UUID) and UUID not set
             if uuid and not tbl.uuid and not found_by_uuid:
@@ -202,7 +206,7 @@ def load_parquet_table(  # noqa: C901
         logger.info("Loaded %d rows into %s", len(pdf), table_name)
 
     # Create or update SqlaTable metadata using UUID-first lookup
-    tbl, found_by_uuid = _find_dataset(table_name, database.id, uuid)
+    tbl, found_by_uuid = _find_dataset(table_name, database.id, uuid, schema)
 
     if not tbl:
         tbl = SqlaTable(table_name=table_name, database_id=database.id)

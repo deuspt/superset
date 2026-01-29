@@ -307,7 +307,7 @@ def test_find_dataset_returns_uuid_match_first(mock_db: MagicMock) -> None:
         uuid_row
     )
 
-    result, found_by_uuid = _find_dataset("test_table", 1, "target-uuid")
+    result, found_by_uuid = _find_dataset("test_table", 1, "target-uuid", "public")
 
     assert result is uuid_row
     assert found_by_uuid is True
@@ -333,7 +333,7 @@ def test_find_dataset_falls_back_to_table_name(mock_db: MagicMock) -> None:
 
     mock_db.session.query.return_value.filter_by.side_effect = filter_by_side_effect
 
-    result, found_by_uuid = _find_dataset("test_table", 1, "nonexistent-uuid")
+    result, found_by_uuid = _find_dataset("test_table", 1, "nonexistent-uuid", "public")
 
     assert result is tablename_row
     assert found_by_uuid is False
@@ -392,3 +392,41 @@ def test_load_parquet_table_duplicate_rows_table_missing(
         # Should return the UUID row, not try to backfill (which would collide)
         assert result is uuid_row
         assert result.uuid == "target-uuid"
+
+
+@patch("superset.examples.generic_loader.db")
+def test_find_dataset_distinguishes_schemas(mock_db: MagicMock) -> None:
+    """Test that _find_dataset uses schema to distinguish same-name tables.
+
+    Scenario:
+    - Row A: table_name="users", schema="schema_a", uuid=None
+    - Row B: table_name="users", schema="schema_b", uuid=None
+
+    Looking up "users" in "schema_b" should find Row B, not Row A.
+    """
+    from superset.examples.generic_loader import _find_dataset
+
+    # Row in schema_b (should be found)
+    schema_b_row = MagicMock()
+    schema_b_row.uuid = None
+    schema_b_row.table_name = "users"
+    schema_b_row.schema = "schema_b"
+
+    # No UUID lookup (uuid not provided), table_name lookup returns schema_b row
+    def filter_by_side_effect(**kwargs):
+        mock_result = MagicMock()
+        if "uuid" in kwargs:
+            mock_result.first.return_value = None
+        elif kwargs.get("schema") == "schema_b":
+            mock_result.first.return_value = schema_b_row
+        else:
+            mock_result.first.return_value = None  # schema_a not requested
+        return mock_result
+
+    mock_db.session.query.return_value.filter_by.side_effect = filter_by_side_effect
+
+    result, found_by_uuid = _find_dataset("users", 1, None, "schema_b")
+
+    assert result is schema_b_row
+    assert found_by_uuid is False
+    assert result.schema == "schema_b"
