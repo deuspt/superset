@@ -285,3 +285,110 @@ def test_create_generic_loader_passes_uuid() -> None:
     assert loader is not None
     assert callable(loader)
     assert loader.__name__ == "load_test_data"
+
+
+@patch("superset.examples.generic_loader.db")
+def test_find_dataset_returns_uuid_match_first(mock_db: MagicMock) -> None:
+    """Test that _find_dataset returns UUID match over table_name match."""
+    from superset.examples.generic_loader import _find_dataset
+
+    # Row with UUID (should be found first)
+    uuid_row = MagicMock()
+    uuid_row.uuid = "target-uuid"
+    uuid_row.table_name = "table_a"
+
+    # Row without UUID (same table_name as query)
+    tablename_row = MagicMock()
+    tablename_row.uuid = None
+    tablename_row.table_name = "test_table"
+
+    # UUID lookup returns uuid_row
+    mock_db.session.query.return_value.filter_by.return_value.first.return_value = (
+        uuid_row
+    )
+
+    result, found_by_uuid = _find_dataset("test_table", 1, "target-uuid")
+
+    assert result is uuid_row
+    assert found_by_uuid is True
+
+
+@patch("superset.examples.generic_loader.db")
+def test_find_dataset_falls_back_to_table_name(mock_db: MagicMock) -> None:
+    """Test that _find_dataset falls back to table_name when UUID not found."""
+    from superset.examples.generic_loader import _find_dataset
+
+    tablename_row = MagicMock()
+    tablename_row.uuid = None
+    tablename_row.table_name = "test_table"
+
+    # UUID lookup returns None, table_name lookup returns the row
+    def filter_by_side_effect(**kwargs):
+        mock_result = MagicMock()
+        if "uuid" in kwargs:
+            mock_result.first.return_value = None
+        else:
+            mock_result.first.return_value = tablename_row
+        return mock_result
+
+    mock_db.session.query.return_value.filter_by.side_effect = filter_by_side_effect
+
+    result, found_by_uuid = _find_dataset("test_table", 1, "nonexistent-uuid")
+
+    assert result is tablename_row
+    assert found_by_uuid is False
+
+
+@patch("superset.examples.generic_loader.db")
+@patch("superset.examples.generic_loader.get_example_database")
+@patch("superset.examples.generic_loader.read_example_data")
+def test_load_parquet_table_duplicate_rows_table_missing(
+    mock_read_data: MagicMock,
+    mock_get_db: MagicMock,
+    mock_db: MagicMock,
+) -> None:
+    """Test UUID-first lookup when duplicate rows exist and physical table is missing.
+
+    Scenario:
+    - Row A: table_name="test_table", uuid="target-uuid" (correct row)
+    - Row B: table_name="test_table", uuid=None (duplicate from broken run)
+    - Physical table was dropped
+
+    The UUID-first lookup should find Row A and avoid collision.
+    """
+    from superset.examples.generic_loader import load_parquet_table
+
+    mock_database = MagicMock()
+    mock_inspector = _setup_database_mocks(
+        mock_get_db,
+        mock_database,
+        has_table=False,  # Table was dropped
+    )
+
+    with patch("superset.examples.generic_loader.inspect") as mock_inspect:
+        mock_inspect.return_value = mock_inspector
+
+        # Row with UUID (should be found by UUID lookup)
+        uuid_row = MagicMock()
+        uuid_row.uuid = "target-uuid"
+        uuid_row.table_name = "test_table"
+        uuid_row.database = mock_database
+
+        # UUID lookup finds the correct row
+        mock_db.session.query.return_value.filter_by.return_value.first.return_value = (
+            uuid_row
+        )
+
+        mock_read_data.return_value = pd.DataFrame({"col1": [1, 2, 3]})
+
+        result = load_parquet_table(
+            parquet_file="test_data",
+            table_name="test_table",
+            database=mock_database,
+            only_metadata=True,
+            uuid="target-uuid",
+        )
+
+        # Should return the UUID row, not try to backfill (which would collide)
+        assert result is uuid_row
+        assert result.uuid == "target-uuid"

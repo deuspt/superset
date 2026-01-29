@@ -34,6 +34,41 @@ from superset.utils.database import get_example_database
 logger = logging.getLogger(__name__)
 
 
+def _find_dataset(
+    table_name: str,
+    database_id: int,
+    uuid: Optional[str] = None,
+) -> tuple[Optional[SqlaTable], bool]:
+    """Find a dataset by UUID first, then fall back to table_name + database_id.
+
+    This avoids unique constraint violations when a duplicate row exists.
+
+    Args:
+        table_name: The table name to look up
+        database_id: The database ID
+        uuid: Optional UUID to look up first
+
+    Returns:
+        A tuple of (dataset or None, found_by_uuid bool)
+    """
+    tbl = None
+    found_by_uuid = False
+
+    if uuid:
+        tbl = db.session.query(SqlaTable).filter_by(uuid=uuid).first()
+        if tbl:
+            found_by_uuid = True
+
+    if not tbl:
+        tbl = (
+            db.session.query(SqlaTable)
+            .filter_by(table_name=table_name, database_id=database_id)
+            .first()
+        )
+
+    return tbl, found_by_uuid
+
+
 def serialize_numpy_arrays(obj: Any) -> Any:  # noqa: C901
     """Convert numpy arrays to JSON-serializable format."""
     if isinstance(obj, np.ndarray):
@@ -92,19 +127,10 @@ def load_parquet_table(  # noqa: C901
     table_exists = database.has_table(Table(table_name, schema=schema))
     if table_exists and not force:
         logger.info("Table %s already exists, skipping data load", table_name)
-        # Use UUID-first lookup to avoid collisions, then fall back to table_name
-        tbl = None
-        if uuid:
-            tbl = db.session.query(SqlaTable).filter_by(uuid=uuid).first()
-        if not tbl:
-            tbl = (
-                db.session.query(SqlaTable)
-                .filter_by(table_name=table_name, database_id=database.id)
-                .first()
-            )
+        tbl, found_by_uuid = _find_dataset(table_name, database.id, uuid)
         if tbl:
-            # Backfill UUID if found by table_name and UUID not set
-            if uuid and not tbl.uuid:
+            # Backfill UUID if found by table_name (not UUID) and UUID not set
+            if uuid and not tbl.uuid and not found_by_uuid:
                 tbl.uuid = uuid
                 db.session.merge(tbl)
                 db.session.commit()  # pylint: disable=consider-using-transaction
@@ -175,31 +201,14 @@ def load_parquet_table(  # noqa: C901
 
         logger.info("Loaded %d rows into %s", len(pdf), table_name)
 
-    # Create or update SqlaTable metadata
-    # If UUID is provided, look up by UUID first to avoid unique constraint violations
-    # (a prior broken run may have created a duplicate with this UUID)
-    tbl = None
-    found_by_uuid = False
-
-    if uuid:
-        tbl = db.session.query(SqlaTable).filter_by(uuid=uuid).first()
-        if tbl:
-            found_by_uuid = True
-
-    # Fall back to table_name + database_id lookup
-    if not tbl:
-        tbl = (
-            db.session.query(SqlaTable)
-            .filter_by(table_name=table_name, database_id=database.id)
-            .first()
-        )
+    # Create or update SqlaTable metadata using UUID-first lookup
+    tbl, found_by_uuid = _find_dataset(table_name, database.id, uuid)
 
     if not tbl:
         tbl = SqlaTable(table_name=table_name, database_id=database.id)
         tbl.database = database
 
-    # Set UUID if provided and not already set (backfill for existing datasets)
-    # Only do this if we found by table_name, not by UUID (to avoid collisions)
+    # Backfill UUID if found by table_name (not UUID) and UUID not set
     if uuid and not tbl.uuid and not found_by_uuid:
         tbl.uuid = uuid
 
