@@ -57,6 +57,7 @@ def load_parquet_table(  # noqa: C901
     sample_rows: Optional[int] = None,
     data_file: Optional[Any] = None,
     schema: Optional[str] = None,
+    uuid: Optional[str] = None,
 ) -> SqlaTable:
     """Load a Parquet file into the example database.
 
@@ -69,6 +70,7 @@ def load_parquet_table(  # noqa: C901
         sample_rows: If specified, only load this many rows
         data_file: Optional specific file path (Path object) to load from
         schema: Schema to load into (defaults to database default schema)
+        uuid: UUID for the dataset (from YAML config) for import flow matching
 
     Returns:
         The created SqlaTable object
@@ -90,12 +92,22 @@ def load_parquet_table(  # noqa: C901
     table_exists = database.has_table(Table(table_name, schema=schema))
     if table_exists and not force:
         logger.info("Table %s already exists, skipping data load", table_name)
-        tbl = (
-            db.session.query(SqlaTable)
-            .filter_by(table_name=table_name, database_id=database.id)
-            .first()
-        )
+        # Use UUID-first lookup to avoid collisions, then fall back to table_name
+        tbl = None
+        if uuid:
+            tbl = db.session.query(SqlaTable).filter_by(uuid=uuid).first()
+        if not tbl:
+            tbl = (
+                db.session.query(SqlaTable)
+                .filter_by(table_name=table_name, database_id=database.id)
+                .first()
+            )
         if tbl:
+            # Backfill UUID if found by table_name and UUID not set
+            if uuid and not tbl.uuid:
+                tbl.uuid = uuid
+                db.session.merge(tbl)
+                db.session.commit()  # pylint: disable=consider-using-transaction
             return tbl
 
     # Load data if not metadata only
@@ -164,16 +176,32 @@ def load_parquet_table(  # noqa: C901
         logger.info("Loaded %d rows into %s", len(pdf), table_name)
 
     # Create or update SqlaTable metadata
-    tbl = (
-        db.session.query(SqlaTable)
-        .filter_by(table_name=table_name, database_id=database.id)
-        .first()
-    )
+    # If UUID is provided, look up by UUID first to avoid unique constraint violations
+    # (a prior broken run may have created a duplicate with this UUID)
+    tbl = None
+    found_by_uuid = False
+
+    if uuid:
+        tbl = db.session.query(SqlaTable).filter_by(uuid=uuid).first()
+        if tbl:
+            found_by_uuid = True
+
+    # Fall back to table_name + database_id lookup
+    if not tbl:
+        tbl = (
+            db.session.query(SqlaTable)
+            .filter_by(table_name=table_name, database_id=database.id)
+            .first()
+        )
 
     if not tbl:
         tbl = SqlaTable(table_name=table_name, database_id=database.id)
-        # Set the database reference
         tbl.database = database
+
+    # Set UUID if provided and not already set (backfill for existing datasets)
+    # Only do this if we found by table_name, not by UUID (to avoid collisions)
+    if uuid and not tbl.uuid and not found_by_uuid:
+        tbl.uuid = uuid
 
     if not only_metadata:
         # Ensure database reference is set before fetching metadata
@@ -182,7 +210,7 @@ def load_parquet_table(  # noqa: C901
         tbl.fetch_metadata()
 
     db.session.merge(tbl)
-    db.session.commit()
+    db.session.commit()  # pylint: disable=consider-using-transaction
 
     return tbl
 
@@ -194,6 +222,7 @@ def create_generic_loader(
     sample_rows: Optional[int] = None,
     data_file: Optional[Any] = None,
     schema: Optional[str] = None,
+    uuid: Optional[str] = None,
 ) -> Callable[[Database, SqlaTable], None]:
     """Create a loader function for a specific Parquet file.
 
@@ -207,6 +236,7 @@ def create_generic_loader(
         sample_rows: Default number of rows to sample
         data_file: Optional specific file path (Path object) for data/ folder pattern
         schema: Schema to load into (defaults to database default schema)
+        uuid: UUID for the dataset (from YAML config) for import flow matching
 
     Returns:
         A loader function with the standard signature
@@ -230,12 +260,13 @@ def create_generic_loader(
             sample_rows=rows,
             data_file=data_file,
             schema=schema,
+            uuid=uuid,
         )
 
         if description and tbl:
             tbl.description = description
             db.session.merge(tbl)
-            db.session.commit()
+            db.session.commit()  # pylint: disable=consider-using-transaction
 
     # Set function name and docstring
     loader.__name__ = f"load_{parquet_file}"
