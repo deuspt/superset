@@ -271,6 +271,79 @@ def test_load_parquet_table_works_without_uuid(
         assert result.table_name == "test_table"
 
 
+@patch("superset.examples.generic_loader.db")
+@patch("superset.examples.generic_loader.get_example_database")
+@patch("superset.examples.generic_loader.read_example_data")
+def test_load_parquet_table_sets_schema_on_new_table(
+    mock_read_data: MagicMock,
+    mock_get_db: MagicMock,
+    mock_db: MagicMock,
+) -> None:
+    """Test that load_parquet_table sets schema when creating a new SqlaTable."""
+    from superset.examples.generic_loader import load_parquet_table
+
+    mock_database = MagicMock()
+    mock_inspector = _setup_database_mocks(mock_get_db, mock_database, has_table=False)
+
+    with patch("superset.examples.generic_loader.inspect") as mock_inspect:
+        mock_inspect.return_value = mock_inspector
+
+        # No existing table
+        mock_db.session.query.return_value.filter_by.return_value.first.return_value = (
+            None
+        )
+
+        mock_read_data.return_value = pd.DataFrame({"col1": [1, 2, 3]})
+
+        result = load_parquet_table(
+            parquet_file="test_data",
+            table_name="test_table",
+            database=mock_database,
+            only_metadata=True,
+            schema="custom_schema",
+        )
+
+        assert result is not None
+        assert result.schema == "custom_schema"
+
+
+@patch("superset.examples.generic_loader.db")
+@patch("superset.examples.generic_loader.get_example_database")
+def test_load_parquet_table_backfills_schema_on_existing_table(
+    mock_get_db: MagicMock,
+    mock_db: MagicMock,
+) -> None:
+    """Test that existing dataset with schema=None gets schema backfilled."""
+    from superset.examples.generic_loader import load_parquet_table
+
+    mock_database = MagicMock()
+    mock_inspector = _setup_database_mocks(mock_get_db, mock_database, has_table=True)
+
+    with patch("superset.examples.generic_loader.inspect") as mock_inspect:
+        mock_inspect.return_value = mock_inspector
+
+        # Existing table with NO schema (needs backfill)
+        mock_existing_table = MagicMock()
+        mock_existing_table.uuid = "some-uuid"
+        mock_existing_table.schema = None
+        mock_existing_table.table_name = "test_table"
+
+        mock_db.session.query.return_value.filter_by.return_value.first.return_value = (
+            mock_existing_table
+        )
+
+        result = load_parquet_table(
+            parquet_file="test_data",
+            table_name="test_table",
+            database=mock_database,
+            only_metadata=True,
+            schema="public",
+        )
+
+        # Schema should be backfilled
+        assert result.schema == "public"
+
+
 def test_create_generic_loader_passes_uuid() -> None:
     """Test that create_generic_loader passes UUID to load_parquet_table."""
     from superset.examples.generic_loader import create_generic_loader

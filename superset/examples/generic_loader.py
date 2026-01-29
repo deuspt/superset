@@ -133,9 +133,16 @@ def load_parquet_table(  # noqa: C901
         logger.info("Table %s already exists, skipping data load", table_name)
         tbl, found_by_uuid = _find_dataset(table_name, database.id, uuid, schema)
         if tbl:
+            needs_update = False
             # Backfill UUID if found by table_name (not UUID) and UUID not set
             if uuid and not tbl.uuid and not found_by_uuid:
                 tbl.uuid = uuid
+                needs_update = True
+            # Backfill schema if existing table has no schema set
+            if schema and not tbl.schema:
+                tbl.schema = schema
+                needs_update = True
+            if needs_update:
                 db.session.merge(tbl)
                 db.session.commit()  # pylint: disable=consider-using-transaction
             return tbl
@@ -211,10 +218,15 @@ def load_parquet_table(  # noqa: C901
     if not tbl:
         tbl = SqlaTable(table_name=table_name, database_id=database.id)
         tbl.database = database
+        tbl.schema = schema
 
     # Backfill UUID if found by table_name (not UUID) and UUID not set
     if uuid and not tbl.uuid and not found_by_uuid:
         tbl.uuid = uuid
+
+    # Backfill schema if existing table has no schema set
+    if schema and not tbl.schema:
+        tbl.schema = schema
 
     if not only_metadata:
         # Ensure database reference is set before fetching metadata
