@@ -16,9 +16,16 @@
 # under the License.
 """Tests for the generic_loader module, specifically UUID handling."""
 
+import uuid as uuid_module
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+
+# Valid test UUIDs for use in tests
+TEST_UUID_1 = "14f48794-ebfa-4f60-a26a-582c49132f1b"
+TEST_UUID_2 = "a2dc77af-e654-49bb-b321-40f6b559a1ee"
+TEST_UUID_3 = "e8623bb9-5e00-f531-506a-19607f5f8005"
+TEST_UUID_4 = "69e9de42-fe7f-4948-946a-f7913227aee8"
 
 
 def _setup_database_mocks(
@@ -64,17 +71,16 @@ def test_load_parquet_table_sets_uuid_on_new_table(
 
         mock_read_data.return_value = pd.DataFrame({"col1": [1, 2, 3]})
 
-        test_uuid = "14f48794-ebfa-4f60-a26a-582c49132f1b"
-
         result = load_parquet_table(
             parquet_file="test_data",
             table_name="test_table",
             database=mock_database,
             only_metadata=True,
-            uuid=test_uuid,
+            uuid=TEST_UUID_1,
         )
 
-        assert result.uuid == test_uuid
+        # UUID is stored as UUID object, compare with expected UUID
+        assert result.uuid == uuid_module.UUID(TEST_UUID_1)
 
 
 @patch("superset.examples.generic_loader.db")
@@ -93,9 +99,8 @@ def test_load_parquet_table_finds_existing_by_uuid_first(
         mock_inspect.return_value = mock_inspector
 
         # Existing table found by UUID
-        test_uuid = "existing-uuid-1234"
         mock_existing_table = MagicMock()
-        mock_existing_table.uuid = test_uuid
+        mock_existing_table.uuid = uuid_module.UUID(TEST_UUID_1)
         mock_existing_table.table_name = "test_table"
 
         # First call (by uuid) returns the table, second call (by table_name) not needed
@@ -108,11 +113,11 @@ def test_load_parquet_table_finds_existing_by_uuid_first(
             table_name="test_table",
             database=mock_database,
             only_metadata=True,
-            uuid=test_uuid,
+            uuid=TEST_UUID_1,
         )
 
         # Should return the existing table found by UUID
-        assert result.uuid == test_uuid
+        assert result.uuid == uuid_module.UUID(TEST_UUID_1)
         assert result is mock_existing_table
 
 
@@ -147,18 +152,16 @@ def test_load_parquet_table_backfills_uuid_on_existing_table(
 
         mock_db.session.query.return_value.filter_by.side_effect = filter_by_side_effect
 
-        new_uuid = "new-uuid-5678"
-
         result = load_parquet_table(
             parquet_file="test_data",
             table_name="test_table",
             database=mock_database,
             only_metadata=True,
-            uuid=new_uuid,
+            uuid=TEST_UUID_2,
         )
 
-        # UUID should be backfilled
-        assert result.uuid == new_uuid
+        # UUID should be backfilled as UUID object
+        assert result.uuid == uuid_module.UUID(TEST_UUID_2)
 
 
 @patch("superset.examples.generic_loader.db")
@@ -177,9 +180,8 @@ def test_load_parquet_table_avoids_uuid_collision(
         mock_inspect.return_value = mock_inspector
 
         # Table already has the UUID we're looking for
-        test_uuid = "existing-uuid-1234"
         mock_existing_table = MagicMock()
-        mock_existing_table.uuid = test_uuid
+        mock_existing_table.uuid = uuid_module.UUID(TEST_UUID_1)
 
         # UUID lookup finds the table
         mock_db.session.query.return_value.filter_by.return_value.first.return_value = (
@@ -191,11 +193,11 @@ def test_load_parquet_table_avoids_uuid_collision(
             table_name="test_table",
             database=mock_database,
             only_metadata=True,
-            uuid=test_uuid,
+            uuid=TEST_UUID_1,
         )
 
         # UUID should remain unchanged (not re-assigned)
-        assert result.uuid == test_uuid
+        assert result.uuid == uuid_module.UUID(TEST_UUID_1)
 
 
 @patch("superset.examples.generic_loader.db")
@@ -214,9 +216,8 @@ def test_load_parquet_table_preserves_existing_different_uuid(
         mock_inspect.return_value = mock_inspector
 
         # A table exists with the target UUID
-        target_uuid = "target-uuid-1234"
         mock_uuid_table = MagicMock()
-        mock_uuid_table.uuid = target_uuid
+        mock_uuid_table.uuid = uuid_module.UUID(TEST_UUID_1)
 
         # UUID lookup finds the UUID-matching table
         mock_db.session.query.return_value.filter_by.return_value.first.return_value = (
@@ -228,12 +229,12 @@ def test_load_parquet_table_preserves_existing_different_uuid(
             table_name="different_table_name",
             database=mock_database,
             only_metadata=True,
-            uuid=target_uuid,
+            uuid=TEST_UUID_1,
         )
 
         # Should return the table found by UUID, not create new one
         assert result is mock_uuid_table
-        assert result.uuid == target_uuid
+        assert result.uuid == uuid_module.UUID(TEST_UUID_1)
 
 
 @patch("superset.examples.generic_loader.db")
@@ -324,7 +325,7 @@ def test_load_parquet_table_backfills_schema_on_existing_table(
 
         # Existing table with NO schema (needs backfill)
         mock_existing_table = MagicMock()
-        mock_existing_table.uuid = "some-uuid"
+        mock_existing_table.uuid = uuid_module.UUID(TEST_UUID_1)
         mock_existing_table.schema = None
         mock_existing_table.table_name = "test_table"
 
@@ -351,11 +352,10 @@ def test_create_generic_loader_passes_uuid(
     """Test that create_generic_loader passes UUID to load_parquet_table."""
     from superset.examples.generic_loader import create_generic_loader
 
-    test_uuid = "test-uuid-1234"
     loader = create_generic_loader(
         parquet_file="test_data",
         table_name="test_table",
-        uuid=test_uuid,
+        uuid=TEST_UUID_1,
     )
 
     # Call the loader to trigger load_parquet_table
@@ -364,7 +364,7 @@ def test_create_generic_loader_passes_uuid(
     # Verify UUID was passed through to load_parquet_table
     mock_load_parquet.assert_called_once()
     _, kwargs = mock_load_parquet.call_args
-    assert kwargs.get("uuid") == test_uuid
+    assert kwargs.get("uuid") == TEST_UUID_1
 
 
 @patch("superset.examples.generic_loader.db")
@@ -374,7 +374,7 @@ def test_find_dataset_returns_uuid_match_first(mock_db: MagicMock) -> None:
 
     # Row with UUID (should be found first)
     uuid_row = MagicMock()
-    uuid_row.uuid = "target-uuid"
+    uuid_row.uuid = uuid_module.UUID(TEST_UUID_1)
     uuid_row.table_name = "table_a"
 
     # Row without UUID (same table_name as query)
@@ -387,7 +387,7 @@ def test_find_dataset_returns_uuid_match_first(mock_db: MagicMock) -> None:
         uuid_row
     )
 
-    result, found_by_uuid = _find_dataset("test_table", 1, "target-uuid", "public")
+    result, found_by_uuid = _find_dataset("test_table", 1, TEST_UUID_1, "public")
 
     assert result is uuid_row
     assert found_by_uuid is True
@@ -413,7 +413,7 @@ def test_find_dataset_falls_back_to_table_name(mock_db: MagicMock) -> None:
 
     mock_db.session.query.return_value.filter_by.side_effect = filter_by_side_effect
 
-    result, found_by_uuid = _find_dataset("test_table", 1, "nonexistent-uuid", "public")
+    result, found_by_uuid = _find_dataset("test_table", 1, TEST_UUID_2, "public")
 
     assert result is tablename_row
     assert found_by_uuid is False
@@ -450,7 +450,7 @@ def test_load_parquet_table_duplicate_rows_table_missing(
 
         # Row with UUID (should be found by UUID lookup)
         uuid_row = MagicMock()
-        uuid_row.uuid = "target-uuid"
+        uuid_row.uuid = uuid_module.UUID(TEST_UUID_1)
         uuid_row.table_name = "test_table"
         uuid_row.database = mock_database
 
@@ -466,12 +466,12 @@ def test_load_parquet_table_duplicate_rows_table_missing(
             table_name="test_table",
             database=mock_database,
             only_metadata=True,
-            uuid="target-uuid",
+            uuid=TEST_UUID_1,
         )
 
         # Should return the UUID row, not try to backfill (which would collide)
         assert result is uuid_row
-        assert result.uuid == "target-uuid"
+        assert result.uuid == uuid_module.UUID(TEST_UUID_1)
 
 
 @patch("superset.examples.generic_loader.db")
@@ -550,16 +550,16 @@ def test_load_parquet_table_no_backfill_when_uuid_already_set(
 
         # Existing table already has a UUID set
         mock_existing_table = MagicMock()
-        mock_existing_table.uuid = "existing-uuid-1234"
+        mock_existing_table.uuid = uuid_module.UUID(TEST_UUID_1)
         mock_existing_table.schema = "public"
         mock_existing_table.table_name = "test_table"
 
-        # Simulate lookup: UUID "new-uuid-5678" not found, but table_name match found
+        # Simulate lookup: UUID TEST_UUID_2 not found, but table_name match found
         def filter_by_side_effect(**kwargs):
             result = MagicMock()
             if "uuid" in kwargs:
                 # UUID lookup: only match if it's the existing UUID
-                if kwargs.get("uuid") == mock_existing_table.uuid:
+                if kwargs.get("uuid") == TEST_UUID_1:
                     result.first.return_value = mock_existing_table
                 else:
                     result.first.return_value = None
@@ -576,11 +576,11 @@ def test_load_parquet_table_no_backfill_when_uuid_already_set(
             table_name="test_table",
             database=mock_database,
             only_metadata=True,
-            uuid="new-uuid-5678",  # Try to set a different UUID
+            uuid=TEST_UUID_2,  # Try to set a different UUID
         )
 
         # Existing UUID should be preserved, not overwritten
-        assert result.uuid == "existing-uuid-1234"
+        assert result.uuid == uuid_module.UUID(TEST_UUID_1)
 
 
 @patch("superset.examples.generic_loader.db")
@@ -600,14 +600,14 @@ def test_load_parquet_table_no_backfill_when_schema_already_set(
 
         # Existing table already has a schema set
         mock_existing_table = MagicMock()
-        mock_existing_table.uuid = "some-uuid"
+        mock_existing_table.uuid = uuid_module.UUID(TEST_UUID_1)
         mock_existing_table.schema = "existing_schema"
         mock_existing_table.table_name = "test_table"
 
         # Simulate lookup: UUID found returns the table
         def filter_by_side_effect(**kwargs):
             result = MagicMock()
-            if "uuid" in kwargs and kwargs.get("uuid") == mock_existing_table.uuid:
+            if "uuid" in kwargs and kwargs.get("uuid") == TEST_UUID_1:
                 result.first.return_value = mock_existing_table
             elif kwargs.get("table_name") == mock_existing_table.table_name:
                 result.first.return_value = mock_existing_table
@@ -666,12 +666,12 @@ def test_load_parquet_table_both_uuid_and_schema_backfill(
             table_name="test_table",
             database=mock_database,
             only_metadata=True,
-            uuid="new-uuid",
+            uuid=TEST_UUID_1,
             schema="new_schema",
         )
 
         # Both should be backfilled
-        assert result.uuid == "new-uuid"
+        assert result.uuid == uuid_module.UUID(TEST_UUID_1)
         assert result.schema == "new_schema"
 
 
@@ -707,7 +707,7 @@ def test_find_dataset_not_found(mock_db: MagicMock) -> None:
     mock_db.session.query.return_value.filter_by.return_value.first.return_value = None
 
     result, found_by_uuid = _find_dataset(
-        "nonexistent_table", 999, "nonexistent-uuid", "public"
+        "nonexistent_table", 999, TEST_UUID_1, "public"
     )
 
     assert result is None

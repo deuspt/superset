@@ -17,6 +17,7 @@
 """Generic Parquet example data loader."""
 
 import logging
+import uuid as uuid_module
 from functools import partial
 from typing import Any, Callable, Optional
 
@@ -145,7 +146,7 @@ def load_parquet_table(  # noqa: C901
             needs_update = False
             # Backfill UUID if found by table_name (not UUID) and UUID not set
             if uuid and not tbl.uuid and not found_by_uuid:
-                tbl.uuid = uuid
+                tbl.uuid = uuid_module.UUID(uuid)
                 needs_update = True
             # Backfill schema if existing table has no schema set
             if schema and not tbl.schema:
@@ -229,11 +230,11 @@ def load_parquet_table(  # noqa: C901
         tbl.database = database
         tbl.schema = schema
         if uuid:
-            tbl.uuid = uuid
+            tbl.uuid = uuid_module.UUID(uuid)
     else:
         # Backfill UUID if found by table_name (not UUID) and UUID not set
         if uuid and not tbl.uuid and not found_by_uuid:
-            tbl.uuid = uuid
+            tbl.uuid = uuid_module.UUID(uuid)
         # Backfill schema if existing table has no schema set
         if schema and not tbl.schema:
             tbl.schema = schema
