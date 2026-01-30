@@ -185,6 +185,12 @@ class ImportExamplesCommand(ImportModelsCommand):
                         force_data=force_data,
                         ignore_permissions=True,
                     )
+                    logger.info(
+                        "Dataset imported: %s (uuid=%s, id=%s)",
+                        config.get("table_name"),
+                        config.get("uuid"),
+                        dataset.id,
+                    )
                 except MultipleResultsFound:
                     # Multiple results can be found for datasets. There was a bug in
                     # load-examples that resulted in datasets being loaded with a NULL
@@ -194,17 +200,33 @@ class ImportExamplesCommand(ImportModelsCommand):
                     # See https://github.com/apache/superset/issues/16051.
                     #
                     # Still add to dataset_info so charts can be imported
+                    logger.warning(
+                        "MultipleResultsFound for dataset %s (uuid=%s, schema=%s)",
+                        config.get("table_name"),
+                        config.get("uuid"),
+                        config.get("schema"),
+                    )
                     dataset = (
                         db.session.query(SqlaTable)
                         .filter_by(uuid=config["uuid"])
                         .first()
                     )
                     if dataset:
+                        logger.info(
+                            "Recovered dataset via UUID lookup: %s (id=%s)",
+                            dataset.table_name,
+                            dataset.id,
+                        )
                         dataset_info[str(dataset.uuid)] = {
                             "datasource_id": dataset.id,
                             "datasource_type": "table",
                             "datasource_name": dataset.table_name,
                         }
+                    else:
+                        logger.error(
+                            "Failed to recover dataset %s - UUID lookup returned None",
+                            config.get("table_name"),
+                        )
                     continue
 
                 dataset_info[str(dataset.uuid)] = {
@@ -216,10 +238,16 @@ class ImportExamplesCommand(ImportModelsCommand):
         # import charts
         chart_ids: dict[str, int] = {}
         for file_name, config in configs.items():
-            if (
-                file_name.startswith("charts/")
-                and config["dataset_uuid"] in dataset_info
-            ):
+            if file_name.startswith("charts/"):
+                if config["dataset_uuid"] not in dataset_info:
+                    logger.warning(
+                        "Skipping chart %s: dataset_uuid %s not in dataset_info "
+                        "(available datasets: %d)",
+                        config.get("slice_name"),
+                        config["dataset_uuid"],
+                        len(dataset_info),
+                    )
+                    continue
                 # update datasource id, type, and name
                 config.update(dataset_info[config["dataset_uuid"]])
                 chart = import_chart(
@@ -235,7 +263,15 @@ class ImportExamplesCommand(ImportModelsCommand):
             if file_name.startswith("dashboards/"):
                 try:
                     config = update_id_refs(config, chart_ids, dataset_info)
-                except KeyError:
+                except KeyError as ex:
+                    logger.error(
+                        "Skipping dashboard %s: KeyError %s "
+                        "(charts imported: %d, datasets imported: %d)",
+                        config.get("dashboard_title"),
+                        ex,
+                        len(chart_ids),
+                        len(dataset_info),
+                    )
                     continue
 
                 dashboard = import_dashboard(
@@ -251,3 +287,11 @@ class ImportExamplesCommand(ImportModelsCommand):
 
         # set ref in the dashboard_slices table
         safe_insert_dashboard_chart_relationships(dashboard_chart_ids)
+
+        # Log import summary
+        logger.info(
+            "Import complete: %d datasets, %d charts, %d dashboard-chart links",
+            len(dataset_info),
+            len(chart_ids),
+            len(dashboard_chart_ids),
+        )
