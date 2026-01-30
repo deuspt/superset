@@ -64,11 +64,20 @@ def _find_dataset(
             found_by_uuid = True
 
     if not tbl:
+        # First try exact schema match for cross-schema safety
         tbl = (
             db.session.query(SqlaTable)
             .filter_by(table_name=table_name, database_id=database_id, schema=schema)
             .first()
         )
+        # If no exact match and schema was specified, fall back to rows with schema=None
+        # so we can backfill schema/UUID on legacy datasets
+        if not tbl and schema is not None:
+            tbl = (
+                db.session.query(SqlaTable)
+                .filter_by(table_name=table_name, database_id=database_id, schema=None)
+                .first()
+            )
 
     return tbl, found_by_uuid
 
@@ -219,14 +228,15 @@ def load_parquet_table(  # noqa: C901
         tbl = SqlaTable(table_name=table_name, database_id=database.id)
         tbl.database = database
         tbl.schema = schema
-
-    # Backfill UUID if found by table_name (not UUID) and UUID not set
-    if uuid and not tbl.uuid and not found_by_uuid:
-        tbl.uuid = uuid
-
-    # Backfill schema if existing table has no schema set
-    if schema and not tbl.schema:
-        tbl.schema = schema
+        if uuid:
+            tbl.uuid = uuid
+    else:
+        # Backfill UUID if found by table_name (not UUID) and UUID not set
+        if uuid and not tbl.uuid and not found_by_uuid:
+            tbl.uuid = uuid
+        # Backfill schema if existing table has no schema set
+        if schema and not tbl.schema:
+            tbl.schema = schema
 
     if not only_metadata:
         # Ensure database reference is set before fetching metadata
@@ -248,7 +258,7 @@ def create_generic_loader(
     data_file: Optional[Any] = None,
     schema: Optional[str] = None,
     uuid: Optional[str] = None,
-) -> Callable[[Database, SqlaTable], None]:
+) -> Callable[..., None]:
     """Create a loader function for a specific Parquet file.
 
     This factory function creates loaders that match the existing pattern

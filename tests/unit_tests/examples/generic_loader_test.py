@@ -344,7 +344,10 @@ def test_load_parquet_table_backfills_schema_on_existing_table(
         assert result.schema == "public"
 
 
-def test_create_generic_loader_passes_uuid() -> None:
+@patch("superset.examples.generic_loader.load_parquet_table")
+def test_create_generic_loader_passes_uuid(
+    mock_load_parquet: MagicMock,
+) -> None:
     """Test that create_generic_loader passes UUID to load_parquet_table."""
     from superset.examples.generic_loader import create_generic_loader
 
@@ -355,9 +358,13 @@ def test_create_generic_loader_passes_uuid() -> None:
         uuid=test_uuid,
     )
 
-    assert loader is not None
-    assert callable(loader)
-    assert loader.__name__ == "load_test_data"
+    # Call the loader to trigger load_parquet_table
+    loader(True, False, False)
+
+    # Verify UUID was passed through to load_parquet_table
+    mock_load_parquet.assert_called_once()
+    _, kwargs = mock_load_parquet.call_args
+    assert kwargs.get("uuid") == test_uuid
 
 
 @patch("superset.examples.generic_loader.db")
@@ -547,9 +554,22 @@ def test_load_parquet_table_no_backfill_when_uuid_already_set(
         mock_existing_table.schema = "public"
         mock_existing_table.table_name = "test_table"
 
-        mock_db.session.query.return_value.filter_by.return_value.first.return_value = (
-            mock_existing_table
-        )
+        # Simulate lookup: UUID "new-uuid-5678" not found, but table_name match found
+        def filter_by_side_effect(**kwargs):
+            result = MagicMock()
+            if "uuid" in kwargs:
+                # UUID lookup: only match if it's the existing UUID
+                if kwargs.get("uuid") == mock_existing_table.uuid:
+                    result.first.return_value = mock_existing_table
+                else:
+                    result.first.return_value = None
+            elif kwargs.get("table_name") == mock_existing_table.table_name:
+                result.first.return_value = mock_existing_table
+            else:
+                result.first.return_value = None
+            return result
+
+        mock_db.session.query.return_value.filter_by.side_effect = filter_by_side_effect
 
         result = load_parquet_table(
             parquet_file="test_data",
@@ -584,9 +604,18 @@ def test_load_parquet_table_no_backfill_when_schema_already_set(
         mock_existing_table.schema = "existing_schema"
         mock_existing_table.table_name = "test_table"
 
-        mock_db.session.query.return_value.filter_by.return_value.first.return_value = (
-            mock_existing_table
-        )
+        # Simulate lookup: UUID found returns the table
+        def filter_by_side_effect(**kwargs):
+            result = MagicMock()
+            if "uuid" in kwargs and kwargs.get("uuid") == mock_existing_table.uuid:
+                result.first.return_value = mock_existing_table
+            elif kwargs.get("table_name") == mock_existing_table.table_name:
+                result.first.return_value = mock_existing_table
+            else:
+                result.first.return_value = None
+            return result
+
+        mock_db.session.query.return_value.filter_by.side_effect = filter_by_side_effect
 
         result = load_parquet_table(
             parquet_file="test_data",
@@ -646,7 +675,10 @@ def test_load_parquet_table_both_uuid_and_schema_backfill(
         assert result.schema == "new_schema"
 
 
-def test_create_generic_loader_passes_schema() -> None:
+@patch("superset.examples.generic_loader.load_parquet_table")
+def test_create_generic_loader_passes_schema(
+    mock_load_parquet: MagicMock,
+) -> None:
     """Test that create_generic_loader passes schema to load_parquet_table."""
     from superset.examples.generic_loader import create_generic_loader
 
@@ -657,9 +689,13 @@ def test_create_generic_loader_passes_schema() -> None:
         schema=test_schema,
     )
 
-    assert loader is not None
-    assert callable(loader)
-    assert loader.__name__ == "load_test_data"
+    # Call the loader to trigger load_parquet_table
+    loader(True, False, False)
+
+    # Verify schema was passed through to load_parquet_table
+    mock_load_parquet.assert_called_once()
+    _, kwargs = mock_load_parquet.call_args
+    assert kwargs.get("schema") == test_schema
 
 
 @patch("superset.examples.generic_loader.db")
@@ -697,7 +733,7 @@ def test_create_generic_loader_description_set(
     )
 
     # Call the loader (type annotation in create_generic_loader is incorrect)
-    loader(True, False, False)  # type: ignore[call-arg,arg-type]
+    loader(True, False, False)
 
     # Verify description was set
     assert mock_tbl.description == "Test dataset description"
@@ -714,7 +750,7 @@ def test_create_generic_loader_no_description(
     """Test that create_generic_loader skips description update when None."""
     from superset.examples.generic_loader import create_generic_loader
 
-    mock_tbl = MagicMock()
+    mock_tbl = MagicMock(spec=[])  # Empty spec means no attributes set
     mock_load_parquet.return_value = mock_tbl
 
     loader = create_generic_loader(
@@ -723,9 +759,10 @@ def test_create_generic_loader_no_description(
         description=None,  # No description
     )
 
-    # Call the loader (type annotation in create_generic_loader is incorrect)
-    loader(True, False, False)  # type: ignore[call-arg,arg-type]
+    # Call the loader
+    loader(True, False, False)
 
-    # Verify description was NOT set (no extra commit for description)
-    # The key is that tbl.description should not be assigned
-    assert not hasattr(mock_tbl, "description") or mock_tbl.description != "anything"
+    # Verify description was NOT set and no DB write was triggered for it
+    # With spec=[], any attribute access would raise AttributeError if not set
+    mock_db.session.merge.assert_not_called()
+    mock_db.session.commit.assert_not_called()
