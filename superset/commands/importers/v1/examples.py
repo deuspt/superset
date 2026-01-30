@@ -39,6 +39,7 @@ from superset.commands.importers.v1 import ImportModelsCommand
 from superset.commands.importers.v1.utils import (
     safe_insert_dashboard_chart_relationships,
 )
+from superset.connectors.sqla.models import SqlaTable
 from superset.daos.base import BaseDAO
 from superset.dashboards.schemas import ImportV1DashboardSchema
 from superset.databases.schemas import ImportV1DatabaseSchema
@@ -191,6 +192,19 @@ class ImportExamplesCommand(ImportModelsCommand):
                     # the correct schema, resulting in duplicates, since the uniqueness
                     # constraint was not enforced correctly in the application logic.
                     # See https://github.com/apache/superset/issues/16051.
+                    #
+                    # Still add to dataset_info so charts can be imported
+                    dataset = (
+                        db.session.query(SqlaTable)
+                        .filter_by(uuid=config["uuid"])
+                        .first()
+                    )
+                    if dataset:
+                        dataset_info[str(dataset.uuid)] = {
+                            "datasource_id": dataset.id,
+                            "datasource_type": "table",
+                            "datasource_name": dataset.table_name,
+                        }
                     continue
 
                 dataset_info[str(dataset.uuid)] = {
