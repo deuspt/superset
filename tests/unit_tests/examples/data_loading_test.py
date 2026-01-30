@@ -69,6 +69,59 @@ def test_get_dataset_config_from_yaml_handles_missing_file(tmp_path: Path) -> No
     assert result["schema"] is None
 
 
+def test_get_dataset_config_from_yaml_schema_main(tmp_path: Path) -> None:
+    """Test that schema: 'main' (SQLite default) becomes None."""
+    from superset.examples.data_loading import get_dataset_config_from_yaml
+
+    yaml_content = """
+table_name: test_table
+schema: main
+uuid: test-uuid-1234
+"""
+    dataset_yaml = tmp_path / "dataset.yaml"
+    dataset_yaml.write_text(yaml_content)
+
+    result = get_dataset_config_from_yaml(tmp_path)
+
+    # SQLite's 'main' schema should be treated as None
+    assert result["schema"] is None
+    assert result["table_name"] == "test_table"
+    assert result["uuid"] == "test-uuid-1234"
+
+
+def test_get_dataset_config_from_yaml_empty_file(tmp_path: Path) -> None:
+    """Test that empty YAML file returns None for all fields."""
+    from superset.examples.data_loading import get_dataset_config_from_yaml
+
+    # Create empty dataset.yaml
+    dataset_yaml = tmp_path / "dataset.yaml"
+    dataset_yaml.write_text("")
+
+    result = get_dataset_config_from_yaml(tmp_path)
+
+    assert result["uuid"] is None
+    assert result["table_name"] is None
+    assert result["schema"] is None
+    assert result["data_file"] is None
+
+
+def test_get_dataset_config_from_yaml_invalid_yaml(tmp_path: Path) -> None:
+    """Test that invalid YAML returns defaults (exception is caught internally)."""
+    from superset.examples.data_loading import get_dataset_config_from_yaml
+
+    # Create invalid YAML (unclosed bracket)
+    dataset_yaml = tmp_path / "dataset.yaml"
+    dataset_yaml.write_text("table_name: [unclosed")
+
+    # Function catches exceptions and returns defaults
+    result = get_dataset_config_from_yaml(tmp_path)
+
+    assert result["uuid"] is None
+    assert result["table_name"] is None
+    assert result["schema"] is None
+    assert result["data_file"] is None
+
+
 def test_get_multi_dataset_config_extracts_uuid(tmp_path: Path) -> None:
     """Test that _get_multi_dataset_config extracts UUID from datasets/*.yaml."""
     from superset.examples.data_loading import _get_multi_dataset_config
@@ -127,3 +180,51 @@ def test_get_multi_dataset_config_handles_missing_file(tmp_path: Path) -> None:
     assert result["uuid"] is None
     # Falls back to dataset_name when no YAML
     assert result["table_name"] == "my_dataset"
+
+
+def test_get_multi_dataset_config_schema_main(tmp_path: Path) -> None:
+    """Test that schema: 'main' becomes None in multi-dataset config."""
+    from superset.examples.data_loading import _get_multi_dataset_config
+
+    datasets_dir = tmp_path / "datasets"
+    datasets_dir.mkdir()
+
+    yaml_content = """
+table_name: my_dataset
+schema: main
+uuid: test-uuid-1234
+"""
+    dataset_yaml = datasets_dir / "my_dataset.yaml"
+    dataset_yaml.write_text(yaml_content)
+
+    data_file = tmp_path / "data" / "my_dataset.parquet"
+
+    result = _get_multi_dataset_config(tmp_path, "my_dataset", data_file)
+
+    # SQLite's 'main' schema should be treated as None
+    assert result["schema"] is None
+    assert result["uuid"] == "test-uuid-1234"
+
+
+def test_get_multi_dataset_config_missing_table_name(tmp_path: Path) -> None:
+    """Test that missing table_name falls back to dataset_name."""
+    from superset.examples.data_loading import _get_multi_dataset_config
+
+    datasets_dir = tmp_path / "datasets"
+    datasets_dir.mkdir()
+
+    # YAML without table_name
+    yaml_content = """
+schema: public
+uuid: test-uuid-5678
+"""
+    dataset_yaml = datasets_dir / "my_dataset.yaml"
+    dataset_yaml.write_text(yaml_content)
+
+    data_file = tmp_path / "data" / "my_dataset.parquet"
+
+    result = _get_multi_dataset_config(tmp_path, "my_dataset", data_file)
+
+    # Falls back to dataset_name when table_name not in YAML
+    assert result["table_name"] == "my_dataset"
+    assert result["uuid"] == "test-uuid-5678"

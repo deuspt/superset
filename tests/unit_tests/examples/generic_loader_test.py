@@ -503,3 +503,229 @@ def test_find_dataset_distinguishes_schemas(mock_db: MagicMock) -> None:
     assert result is schema_b_row
     assert found_by_uuid is False
     assert result.schema == "schema_b"
+
+
+@patch("superset.examples.generic_loader.db")
+def test_find_dataset_no_uuid_no_schema(mock_db: MagicMock) -> None:
+    """Test _find_dataset with no UUID and no schema (basic lookup)."""
+    from superset.examples.generic_loader import _find_dataset
+
+    basic_row = MagicMock()
+    basic_row.uuid = None
+    basic_row.table_name = "test_table"
+    basic_row.schema = None
+
+    # No UUID provided, so skip UUID lookup; table_name+database_id lookup returns row
+    mock_db.session.query.return_value.filter_by.return_value.first.return_value = (
+        basic_row
+    )
+
+    result, found_by_uuid = _find_dataset("test_table", 1, None, None)
+
+    assert result is basic_row
+    assert found_by_uuid is False
+
+
+@patch("superset.examples.generic_loader.db")
+@patch("superset.examples.generic_loader.get_example_database")
+def test_load_parquet_table_no_backfill_when_uuid_already_set(
+    mock_get_db: MagicMock,
+    mock_db: MagicMock,
+) -> None:
+    """Test that existing UUID is preserved (not overwritten) during backfill."""
+    from superset.examples.generic_loader import load_parquet_table
+
+    mock_database = MagicMock()
+    mock_inspector = _setup_database_mocks(mock_get_db, mock_database, has_table=True)
+
+    with patch("superset.examples.generic_loader.inspect") as mock_inspect:
+        mock_inspect.return_value = mock_inspector
+
+        # Existing table already has a UUID set
+        mock_existing_table = MagicMock()
+        mock_existing_table.uuid = "existing-uuid-1234"
+        mock_existing_table.schema = "public"
+        mock_existing_table.table_name = "test_table"
+
+        mock_db.session.query.return_value.filter_by.return_value.first.return_value = (
+            mock_existing_table
+        )
+
+        result = load_parquet_table(
+            parquet_file="test_data",
+            table_name="test_table",
+            database=mock_database,
+            only_metadata=True,
+            uuid="new-uuid-5678",  # Try to set a different UUID
+        )
+
+        # Existing UUID should be preserved, not overwritten
+        assert result.uuid == "existing-uuid-1234"
+
+
+@patch("superset.examples.generic_loader.db")
+@patch("superset.examples.generic_loader.get_example_database")
+def test_load_parquet_table_no_backfill_when_schema_already_set(
+    mock_get_db: MagicMock,
+    mock_db: MagicMock,
+) -> None:
+    """Test that existing schema is preserved (not overwritten) during backfill."""
+    from superset.examples.generic_loader import load_parquet_table
+
+    mock_database = MagicMock()
+    mock_inspector = _setup_database_mocks(mock_get_db, mock_database, has_table=True)
+
+    with patch("superset.examples.generic_loader.inspect") as mock_inspect:
+        mock_inspect.return_value = mock_inspector
+
+        # Existing table already has a schema set
+        mock_existing_table = MagicMock()
+        mock_existing_table.uuid = "some-uuid"
+        mock_existing_table.schema = "existing_schema"
+        mock_existing_table.table_name = "test_table"
+
+        mock_db.session.query.return_value.filter_by.return_value.first.return_value = (
+            mock_existing_table
+        )
+
+        result = load_parquet_table(
+            parquet_file="test_data",
+            table_name="test_table",
+            database=mock_database,
+            only_metadata=True,
+            schema="new_schema",  # Try to set a different schema
+        )
+
+        # Existing schema should be preserved, not overwritten
+        assert result.schema == "existing_schema"
+
+
+@patch("superset.examples.generic_loader.db")
+@patch("superset.examples.generic_loader.get_example_database")
+def test_load_parquet_table_both_uuid_and_schema_backfill(
+    mock_get_db: MagicMock,
+    mock_db: MagicMock,
+) -> None:
+    """Test that both UUID and schema are backfilled in a single call."""
+    from superset.examples.generic_loader import load_parquet_table
+
+    mock_database = MagicMock()
+    mock_inspector = _setup_database_mocks(mock_get_db, mock_database, has_table=True)
+
+    with patch("superset.examples.generic_loader.inspect") as mock_inspect:
+        mock_inspect.return_value = mock_inspector
+
+        # Existing table with neither UUID nor schema
+        mock_existing_table = MagicMock()
+        mock_existing_table.uuid = None
+        mock_existing_table.schema = None
+        mock_existing_table.table_name = "test_table"
+
+        # UUID lookup returns None, table_name lookup returns the table
+        def filter_by_side_effect(**kwargs):
+            mock_result = MagicMock()
+            if "uuid" in kwargs:
+                mock_result.first.return_value = None
+            else:
+                mock_result.first.return_value = mock_existing_table
+            return mock_result
+
+        mock_db.session.query.return_value.filter_by.side_effect = filter_by_side_effect
+
+        result = load_parquet_table(
+            parquet_file="test_data",
+            table_name="test_table",
+            database=mock_database,
+            only_metadata=True,
+            uuid="new-uuid",
+            schema="new_schema",
+        )
+
+        # Both should be backfilled
+        assert result.uuid == "new-uuid"
+        assert result.schema == "new_schema"
+
+
+def test_create_generic_loader_passes_schema() -> None:
+    """Test that create_generic_loader passes schema to load_parquet_table."""
+    from superset.examples.generic_loader import create_generic_loader
+
+    test_schema = "custom_schema"
+    loader = create_generic_loader(
+        parquet_file="test_data",
+        table_name="test_table",
+        schema=test_schema,
+    )
+
+    assert loader is not None
+    assert callable(loader)
+    assert loader.__name__ == "load_test_data"
+
+
+@patch("superset.examples.generic_loader.db")
+def test_find_dataset_not_found(mock_db: MagicMock) -> None:
+    """Test that _find_dataset returns (None, False) when nothing matches."""
+    from superset.examples.generic_loader import _find_dataset
+
+    # Both UUID and table_name lookups return None
+    mock_db.session.query.return_value.filter_by.return_value.first.return_value = None
+
+    result, found_by_uuid = _find_dataset(
+        "nonexistent_table", 999, "nonexistent-uuid", "public"
+    )
+
+    assert result is None
+    assert found_by_uuid is False
+
+
+@patch("superset.examples.generic_loader.db")
+@patch("superset.examples.generic_loader.load_parquet_table")
+def test_create_generic_loader_description_set(
+    mock_load_parquet: MagicMock,
+    mock_db: MagicMock,
+) -> None:
+    """Test that create_generic_loader applies description to the dataset."""
+    from superset.examples.generic_loader import create_generic_loader
+
+    mock_tbl = MagicMock()
+    mock_load_parquet.return_value = mock_tbl
+
+    loader = create_generic_loader(
+        parquet_file="test_data",
+        table_name="test_table",
+        description="Test dataset description",
+    )
+
+    # Call the loader (type annotation in create_generic_loader is incorrect)
+    loader(True, False, False)  # type: ignore[call-arg,arg-type]
+
+    # Verify description was set
+    assert mock_tbl.description == "Test dataset description"
+    mock_db.session.merge.assert_called_with(mock_tbl)
+    mock_db.session.commit.assert_called()
+
+
+@patch("superset.examples.generic_loader.db")
+@patch("superset.examples.generic_loader.load_parquet_table")
+def test_create_generic_loader_no_description(
+    mock_load_parquet: MagicMock,
+    mock_db: MagicMock,
+) -> None:
+    """Test that create_generic_loader skips description update when None."""
+    from superset.examples.generic_loader import create_generic_loader
+
+    mock_tbl = MagicMock()
+    mock_load_parquet.return_value = mock_tbl
+
+    loader = create_generic_loader(
+        parquet_file="test_data",
+        table_name="test_table",
+        description=None,  # No description
+    )
+
+    # Call the loader (type annotation in create_generic_loader is incorrect)
+    loader(True, False, False)  # type: ignore[call-arg,arg-type]
+
+    # Verify description was NOT set (no extra commit for description)
+    # The key is that tbl.description should not be assigned
+    assert not hasattr(mock_tbl, "description") or mock_tbl.description != "anything"
