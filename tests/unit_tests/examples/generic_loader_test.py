@@ -534,6 +534,49 @@ def test_find_dataset_no_uuid_no_schema(mock_db: MagicMock) -> None:
 
 
 @patch("superset.examples.generic_loader.db")
+def test_find_dataset_falls_back_to_schema_none(mock_db: MagicMock) -> None:
+    """Test _find_dataset falls back to schema=None when exact schema match not found.
+
+    Scenario: A legacy dataset exists with schema=None (from older load-examples).
+    When looking up with schema="public", the exact match fails, but we should
+    find the legacy row with schema=None so we can backfill the schema.
+    """
+    from superset.examples.generic_loader import _find_dataset
+
+    # Legacy row with schema=None (needs backfill)
+    legacy_row = MagicMock()
+    legacy_row.uuid = None
+    legacy_row.table_name = "users"
+    legacy_row.schema = None
+
+    # Exact schema match returns None, schema=None fallback returns legacy_row
+    call_count = 0
+
+    def filter_by_side_effect(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        mock_result = MagicMock()
+        if kwargs.get("schema") == "public":
+            # Exact schema match fails
+            mock_result.first.return_value = None
+        elif kwargs.get("schema") is None:
+            # Fallback to schema=None finds the legacy row
+            mock_result.first.return_value = legacy_row
+        else:
+            mock_result.first.return_value = None
+        return mock_result
+
+    mock_db.session.query.return_value.filter_by.side_effect = filter_by_side_effect
+
+    result, found_by_uuid = _find_dataset("users", 1, None, "public")
+
+    assert result is legacy_row
+    assert found_by_uuid is False
+    # Verify both lookups happened (exact match + fallback)
+    assert call_count == 2
+
+
+@patch("superset.examples.generic_loader.db")
 @patch("superset.examples.generic_loader.get_example_database")
 def test_load_parquet_table_no_backfill_when_uuid_already_set(
     mock_get_db: MagicMock,

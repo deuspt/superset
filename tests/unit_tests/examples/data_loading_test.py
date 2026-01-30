@@ -228,3 +228,68 @@ uuid: test-uuid-5678
     # Falls back to dataset_name when table_name not in YAML
     assert result["table_name"] == "my_dataset"
     assert result["uuid"] == "test-uuid-5678"
+
+
+def test_get_multi_dataset_config_data_file_override(tmp_path: Path) -> None:
+    """Test that explicit data_file in YAML overrides the default data file."""
+    from superset.examples.data_loading import _get_multi_dataset_config
+
+    # Create datasets directory and YAML file with explicit data_file
+    datasets_dir = tmp_path / "datasets"
+    datasets_dir.mkdir()
+
+    # Create data directory and the explicit data file
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    explicit_file = data_dir / "custom_data.parquet"
+    explicit_file.write_bytes(b"fake parquet")
+
+    yaml_content = """
+table_name: my_dataset
+schema: public
+uuid: 14f48794-ebfa-4f60-a26a-582c49132f1b
+data_file: custom_data.parquet
+"""
+    dataset_yaml = datasets_dir / "my_dataset.yaml"
+    dataset_yaml.write_text(yaml_content)
+
+    # Default data file (would be used if no override)
+    default_data_file = data_dir / "my_dataset.parquet"
+
+    result = _get_multi_dataset_config(tmp_path, "my_dataset", default_data_file)
+
+    # Should use the explicit data_file from YAML
+    assert result["data_file"] == explicit_file
+    assert result["table_name"] == "my_dataset"
+    assert result["uuid"] == "14f48794-ebfa-4f60-a26a-582c49132f1b"
+
+
+def test_get_multi_dataset_config_data_file_missing(tmp_path: Path) -> None:
+    """Test that missing explicit data_file keeps the default data file."""
+    from superset.examples.data_loading import _get_multi_dataset_config
+
+    # Create datasets directory and YAML file with non-existent data_file
+    datasets_dir = tmp_path / "datasets"
+    datasets_dir.mkdir()
+
+    # Create data directory but NOT the explicit file
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    yaml_content = """
+table_name: my_dataset
+schema: public
+uuid: 14f48794-ebfa-4f60-a26a-582c49132f1b
+data_file: nonexistent.parquet
+"""
+    dataset_yaml = datasets_dir / "my_dataset.yaml"
+    dataset_yaml.write_text(yaml_content)
+
+    # Default data file passed to the function
+    default_data_file = data_dir / "my_dataset.parquet"
+
+    result = _get_multi_dataset_config(tmp_path, "my_dataset", default_data_file)
+
+    # Should keep the default data_file since explicit one doesn't exist
+    assert result["data_file"] == default_data_file
+    assert result["uuid"] == "14f48794-ebfa-4f60-a26a-582c49132f1b"
