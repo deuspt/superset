@@ -124,6 +124,12 @@ def import_dataset(  # noqa: C901
         if not overwrite or not can_write:
             return existing
         config["id"] = existing.id
+        # Sync unique constraint fields so import_from_dict can find the existing
+        # row. import_from_dict queries by (database_id, schema, table_name), not
+        # by UUID or ID. If these differ, it won't find the existing row.
+        config["database_id"] = existing.database_id
+        config["schema"] = existing.schema
+        config["table_name"] = existing.table_name
 
     elif not can_write:
         raise ImportFailedError(
