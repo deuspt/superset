@@ -239,11 +239,19 @@ class ImportExamplesCommand(ImportModelsCommand):
         chart_ids: dict[str, int] = {}
         for file_name, config in configs.items():
             if file_name.startswith("charts/"):
+                chart_name = config.get("slice_name", "unknown")
+                chart_uuid = config.get("uuid", "unknown")
+                logger.info(
+                    "Importing chart: %s (uuid=%s, dataset_uuid=%s)",
+                    chart_name,
+                    chart_uuid,
+                    config.get("dataset_uuid"),
+                )
                 if config["dataset_uuid"] not in dataset_info:
                     logger.warning(
-                        "Skipping chart %s: dataset_uuid %s not in dataset_info "
+                        "SKIP chart %s: dataset_uuid %s not in dataset_info "
                         "(available datasets: %d)",
-                        config.get("slice_name"),
+                        chart_name,
                         config["dataset_uuid"],
                         len(dataset_info),
                     )
@@ -256,18 +264,30 @@ class ImportExamplesCommand(ImportModelsCommand):
                     ignore_permissions=True,
                 )
                 chart_ids[str(chart.uuid)] = chart.id
+                logger.info(
+                    "OK chart: %s (id=%s)",
+                    chart_name,
+                    chart.id,
+                )
 
         # import dashboards
         dashboard_chart_ids: list[tuple[int, int]] = []
         for file_name, config in configs.items():
             if file_name.startswith("dashboards/"):
+                dashboard_title = config.get("dashboard_title", "unknown")
+                dashboard_uuid = config.get("uuid", "unknown")
+                logger.info(
+                    "Importing dashboard: %s (uuid=%s)",
+                    dashboard_title,
+                    dashboard_uuid,
+                )
                 try:
                     config = update_id_refs(config, chart_ids, dataset_info)
                 except KeyError as ex:
                     logger.error(
-                        "Skipping dashboard %s: KeyError %s "
+                        "SKIP dashboard %s: KeyError %s "
                         "(charts imported: %d, datasets imported: %d)",
-                        config.get("dashboard_title"),
+                        dashboard_title,
                         ex,
                         len(chart_ids),
                         len(dataset_info),
@@ -280,6 +300,11 @@ class ImportExamplesCommand(ImportModelsCommand):
                     ignore_permissions=True,
                 )
                 dashboard.published = True
+                logger.info(
+                    "OK dashboard: %s (id=%s)",
+                    dashboard_title,
+                    dashboard.id,
+                )
 
                 for uuid in find_chart_uuids(config["position"]):
                     chart_id = chart_ids[uuid]
