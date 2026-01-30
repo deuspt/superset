@@ -24,6 +24,7 @@ import yaml
 
 # Import loaders that have custom logic (dashboards, CSS, etc.)
 from superset.cli.test_loaders import load_big_data
+from superset.utils.core import get_example_default_schema
 
 from .css_templates import load_css_templates
 
@@ -140,11 +141,14 @@ def discover_datasets() -> Dict[str, Callable[..., None]]:
             logger.warning("data_file '%s' does not exist", explicit_data_file)
             resolved_file = data_file
 
+        # Use default schema if not specified, matching import flow behavior
+        schema = config["schema"] or get_example_default_schema()
+
         loader_name = f"load_{dataset_name}"
         loaders[loader_name] = create_generic_loader(
             dataset_name,
             table_name=table_name,
-            schema=config["schema"],
+            schema=schema,
             data_file=resolved_file,
             uuid=config.get("uuid"),
         )
@@ -158,12 +162,16 @@ def discover_datasets() -> Dict[str, Callable[..., None]]:
             continue
 
         config = _get_multi_dataset_config(example_dir, dataset_name, data_file)
+
+        # Use default schema if not specified, matching import flow behavior
+        schema = config["schema"] or get_example_default_schema()
+
         loader_name = f"load_{dataset_name}"
         if loader_name not in loaders:
             loaders[loader_name] = create_generic_loader(
                 dataset_name,
                 table_name=config["table_name"],
-                schema=config["schema"],
+                schema=schema,
                 data_file=config["data_file"],
                 uuid=config.get("uuid"),
             )
