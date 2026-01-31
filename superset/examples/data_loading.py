@@ -106,6 +106,18 @@ def _get_multi_dataset_config(
     return result
 
 
+def _get_effective_schema(config_schema: Optional[str]) -> Optional[str]:
+    """Get effective schema for data loading, matching import flow behavior.
+
+    SQLite's 'main' schema is not a real schema like PostgreSQL's 'public',
+    so we treat it as None to avoid schema-related SQL errors.
+    """
+    if config_schema:
+        return config_schema
+    default_schema = get_example_default_schema()
+    return None if default_schema == "main" else default_schema
+
+
 def discover_datasets() -> Dict[str, Callable[..., None]]:
     """Auto-discover all example datasets and create loaders for them.
 
@@ -141,14 +153,11 @@ def discover_datasets() -> Dict[str, Callable[..., None]]:
             logger.warning("data_file '%s' does not exist", explicit_data_file)
             resolved_file = data_file
 
-        # Use default schema if not specified, matching import flow behavior
-        schema = config["schema"] or get_example_default_schema()
-
         loader_name = f"load_{dataset_name}"
         loaders[loader_name] = create_generic_loader(
             dataset_name,
             table_name=table_name,
-            schema=schema,
+            schema=_get_effective_schema(config["schema"]),
             data_file=resolved_file,
             uuid=config.get("uuid"),
         )
@@ -163,15 +172,12 @@ def discover_datasets() -> Dict[str, Callable[..., None]]:
 
         config = _get_multi_dataset_config(example_dir, dataset_name, data_file)
 
-        # Use default schema if not specified, matching import flow behavior
-        schema = config["schema"] or get_example_default_schema()
-
         loader_name = f"load_{dataset_name}"
         if loader_name not in loaders:
             loaders[loader_name] = create_generic_loader(
                 dataset_name,
                 table_name=config["table_name"],
-                schema=schema,
+                schema=_get_effective_schema(config["schema"]),
                 data_file=config["data_file"],
                 uuid=config.get("uuid"),
             )
