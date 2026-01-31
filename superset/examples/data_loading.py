@@ -24,7 +24,7 @@ import yaml
 
 # Import loaders that have custom logic (dashboards, CSS, etc.)
 from superset.cli.test_loaders import load_big_data
-from superset.utils.core import get_example_default_schema
+from superset.utils.core import backend, get_example_default_schema
 
 from .css_templates import load_css_templates
 
@@ -109,13 +109,18 @@ def _get_multi_dataset_config(
 def _get_effective_schema(config_schema: Optional[str]) -> Optional[str]:
     """Get effective schema for data loading, matching import flow behavior.
 
-    SQLite's 'main' schema is not a real schema like PostgreSQL's 'public',
-    so we treat it as None to avoid schema-related SQL errors.
+    Some databases (SQLite) don't support real schemas - their 'main' is just
+    an attachment name, not a schema like PostgreSQL's 'public'. For these
+    backends, we return None to avoid schema-related SQL errors.
     """
+    # Backends that don't support real schemas
+    no_schema_backends = {"sqlite"}
+
     if config_schema:
         return config_schema
-    default_schema = get_example_default_schema()
-    return None if default_schema == "main" else default_schema
+    if backend() in no_schema_backends:
+        return None
+    return get_example_default_schema()
 
 
 def discover_datasets() -> Dict[str, Callable[..., None]]:
